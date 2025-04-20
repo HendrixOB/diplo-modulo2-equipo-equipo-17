@@ -1,1 +1,3 @@
-# diplo-modulo2-equipo-equipo-17
+# Proyecto final modulo 2
+## Equipo 17
+
