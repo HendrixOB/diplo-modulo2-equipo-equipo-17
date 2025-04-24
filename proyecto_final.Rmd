@@ -16,3 +16,940 @@ library(dbplyr)
 library(RSQLite)
 
 conn <- DBI::dbConnect(RSQLite::SQLite(), "vuelos.db")
+```
+
+
+# Subsección 1
+
+## Librerias
+
+```{r}
+library(DBI)
+library(dplyr)
+library(lubridate)
+library(RSQLite)
+```
+
+## Datos
+
+```{r}
+conn <- DBI::dbConnect(RSQLite::SQLite(), "vuelos.db")
+dbListTables(conn)
+aerol <- dbGetQuery(conn, "SELECT * FROM aerolineas")
+aerop <- dbGetQuery(conn, "SELECT * FROM aeropuertos")
+avio <- dbGetQuery(conn, "SELECT * FROM aviones")
+clim <- dbGetQuery(conn, "SELECT * FROM clima")
+vuelo <- dbGetQuery(conn, "SELECT * FROM vuelos")
+```
+
+Para facilitar las cosas guardo las bases combinadas todas juntas
+
+```{r}
+datos_conj <- dbGetQuery(conn, "SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)")
+```
+
+## 1.¿Qué aerolínea tuvo el mayor retraso promedio en la salida en 2013?
+
+Frontier Airlines Inc.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.faa aeropuerto_origen, A.dest, C2.faa aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           SELECT aerolinea Aerolinea, AVG(dep_delay) retraso_prom FROM BASE
+           GROUP BY 1
+           ORDER BY 2 DESC LIMIT 1")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aerolinea) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE)) %>%
+  slice_max(n = 1, order_by = incidentes_tot, with_ties = TRUE)
+```
+
+## 2.¿Qué día de la semana tuvo más vuelos retrasados en promedio?
+
+El jueves por promedio tiene mas tiempo de atraso. Los lunes son los días con mas vuelos atrasados.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.faa aeropuerto_origen, A.dest, C2.faa aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+    
+           FINAL AS (SELECT *, datetime(time_hour, 'auto','localtime', '+1 hour') fecha,
+           strftime('%w', datetime(time_hour, 'auto','localtime' )) dia_semana, 
+           CASE WHEN dep_delay > 0 OR arr_delay > 0 THEN 1 ELSE 0 END retraso_total,
+           CASE WHEN dep_delay <> 0 OR arr_delay <> 0 THEN 1 ELSE 0 END retraso_positivo
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT dia_semana, sum(retraso_total), sum(retraso_positivo),
+           AVG(dep_delay), count(dep_delay)
+           FROM FINAL
+           GROUP BY 1
+           ORDER BY 4 DESC")
+```
+
+```{r}
+datos_conj <- datos_conj %>% dplyr::mutate(departure_time = make_date(year,month,day),
+                                   weekday = wday(departure_time, label = TRUE, abbr = FALSE),
+                                   atrasos_salida = case_when(dep_delay != 0 ~ 1,
+                                                                TRUE ~ 0),
+                                   atrasos_llegada = case_when(arr_delay != 0 ~ 1,
+                                                                TRUE ~ 0),
+                                   atrasos_total = case_when(dep_delay != 0 | arr_delay != 0 ~ 1,
+                                                                TRUE ~ 0),
+                                   )
+
+datos_conj %>%  dplyr::group_by(weekday) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE),
+                   atrasos_salida = sum(atrasos_salida),
+                   atrasos_llegada = sum(atrasos_llegada),
+                   atrasos_total = sum(atrasos_total)) %>% 
+  arrange(desc(atrasos_total))
+```
+
+## 3.¿Cuál es la distribución de los retrasos en la salida para cada aeropuerto?
+
+Tomando la distribución como el valor absoluto de la diferencia entre el tiempo programado y tiempo atrasado, el cual es el dep_delay en valor absoluto. Tenemos:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT aeropuerto_origen, sum(abs(dep_delay))
+           FROM BASE
+           GROUP BY 1
+           ORDER BY 1")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aeropuerto_origen) %>% 
+  dplyr::summarise(incidentes_tot = sum(abs(dep_delay), na.rm = TRUE)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 4.¿Qué proporción de vuelos se retrasaron más de 30 minutos?
+
+Al rededor del 14%
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.faa aeropuerto_origen, A.dest, C2.faa aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, datetime(time_hour, 'auto','localtime', '+1 hour') fecha,
+           strftime('%w', datetime(time_hour, 'auto','localtime' )) dia_semana, 
+           CASE WHEN dep_delay > 30 OR arr_delay > 30 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT AVG(retraso), sum(retraso)/count(*)
+           FROM FINAL")
+```
+
+```{r}
+datos_conj %>%
+  filter(dep_delay > 30) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE),
+                   retrasos = sum(atrasos_total)/336776) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 5.¿Qué destinos tuvieron los mayores retrasos promedio en la llegada?
+
+Se puede ver:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, datetime(time_hour, 'auto','localtime', '+1 hour') fecha,
+           strftime('%w', datetime(time_hour, 'auto','localtime' )) dia_semana, 
+           CASE WHEN arr_delay > 0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT aeropuerto_dest, avg(retraso)
+           FROM FINAL
+           GROUP BY 1
+           ORDER BY 2 DESC LIMIT 10")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aeropuerto_dest) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay, na.rm = TRUE),
+                   retrasos = mean(atrasos_salida)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 6.¿Qué aerolíneas tuvieron el mayor número de vuelos desde NYC?
+
+Podemos ver:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN arr_delay > 0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT aerolinea, Count(*)
+           FROM FINAL
+           WHERE origin in ('JFK','LGA', 'EWR')
+           GROUP BY 1
+           ORDER BY 2 DESC")
+```
+
+```{r}
+nwa <- c('JFK' , 'LGA' , 'EWR')
+
+datos_conj %>%  dplyr::group_by(aerolinea) %>% 
+  filter(origin %in% nwa) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay, na.rm = TRUE), n=  n()) %>% 
+  arrange(desc(n))
+```
+
+## 7.¿Cómo varía el retraso de los vuelos según el fabricante de la aeronave?
+
+Podemos ver por fabricante el número de atrasos, de mayor a menor.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp, A.tailnum
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN arr_delay > 0 OR dep_delay >0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT manufacturer,  sum(retraso)
+           FROM FINAL
+           GROUP BY 1
+           ORDER BY 2 DESC")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(manufacturer) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay + dep_delay, na.rm = TRUE),
+                   retraso = sum(atrasos_total)) %>% 
+  arrange(desc(retraso))
+```
+
+## 8.¿Los aviones más antiguos tienen más retrasos?
+
+Tomando a los aviones creados antes del 2000 como antiguos, la respuesta es no, los nuevos a tienen más retrasos.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp, A.tailnum
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN arr_delay > 0 OR dep_delay >0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT sum(CASE WHEN year_avion < 2000 THEN retraso END) retrasos_1900,
+           sum(CASE WHEN year_avion >= 2000 THEN retraso END) retrasos_2000
+           FROM FINAL")
+```
+
+```{r}
+datos_conj %>% 
+  filter(year_avion < 2000) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay+dep_delay, na.rm = TRUE)) %>% 
+  arrange(desc(incidentes_tot))
+
+datos_conj %>% 
+  filter(year_avion >= 2000) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay+dep_delay, na.rm = TRUE)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 9.¿Qué modelos de aviones se utilizan con mayor frecuencia en vuelos desde NYC?
+
+Podemos ver:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN arr_delay > 0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT model, Count(*)
+           FROM FINAL
+           WHERE origin in ('JFK','LGA', 'EWR')
+           GROUP BY 1
+           ORDER BY 2 DESC limit 10")
+```
+
+```{r}
+datos_conj %>%  select(model,dep_delay) %>%
+  group_by(model) %>% 
+  dplyr::summarise(n = n()) %>% 
+  arrange(desc(n))
+```
+
+## 10.¿Cuál es la distancia promedio de vuelo por aerolínea?
+
+Tenemos:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN arr_delay > 0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT aerolinea, avg(distance)
+           FROM FINAL
+           GROUP BY 1 ORDER BY 2 DESC")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aerolinea) %>% 
+  dplyr::summarise(incidentes_tot = mean(distance, na.rm = TRUE)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 11.¿Qué aeropuerto de NYC tuvo el mayor número de retrasos en la salida?
+
+Newark Liberty Intl
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour)),
+           
+           FINAL AS (SELECT *, CASE WHEN dep_delay <> 0 THEN 1 ELSE 0 END retraso
+           FROM BASE
+           ORDER BY day)
+           
+           SELECT aeropuerto_origen, sum(retraso), 
+           avg(CASE WHEN dep_delay <> 0 THEN dep_delay ELSE 0 END) dep_delay_avg
+           FROM FINAL
+           WHERE origin in ('JFK','LGA', 'EWR')
+           GROUP BY 1 ORDER BY 2 DESC")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aeropuerto_origen) %>% 
+  filter(origin %in% nwa, dep_delay != 0) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE), 
+                   atrasos_salida =  sum(atrasos_salida),
+                   atrasos_total = sum(atrasos_total)) %>% 
+  arrange(desc((atrasos_total)))
+```
+
+## 12.¿Qué aeropuerto tuvo el menor tiempo promedio de taxi-out?
+
+LGA
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT origin, avg(dep_delay)
+           FROM BASE
+           GROUP BY 1 
+           ORDER BY 2")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aeropuerto_origen) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE)) %>% 
+  arrange(incidentes_tot)
+```
+
+## 13.¿Qué porcentaje de vuelos que salen de cada aeropuerto de NYC fueron puntuales?
+
+Podemos ver:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT AVG(CASE WHEN dep_delay = 0 THEN 1 ELSE 0 END) puntuales
+           FROM BASE
+           WHERE origin in ('JFK','LGA', 'EWR')
+           ")
+```
+
+```{r}
+datos_conj %>% select(origin, dep_delay) %>% 
+  filter(dep_delay == 0) %>% 
+  dplyr::summarise(n = n()/336776)
+```
+
+## 14.¿Qué aeropuertos de destino tienen el mayor retraso promedio en la llegada para vuelos desde NYC?
+
+En tiempo de retraso Columbia Metropolitan, en promedio Hartsfield Jackson Atlanta Intl
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT aeropuerto_dest, avg(arr_delay)
+           FROM BASE
+           WHERE origin in ('JFK','LGA', 'EWR')
+           GROUP BY 1 ORDER BY 2 DESC LIMIT 10")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(aeropuerto_dest) %>% 
+  filter(origin %in% nwa) %>% 
+  dplyr::summarise(incidentes_tot = mean(arr_delay, na.rm = TRUE),
+                   retraso = sum(atrasos_llegada)/336776) %>% 
+  arrange(desc(retraso))
+```
+
+## 15.¿Cómo varían los retrasos en la salida según la hora del día en cada aeropuerto de NYC?
+
+Podemos ver
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT hour, avg(dep_delay)
+           FROM BASE
+           GROUP BY 1 ORDER BY 1")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(hour) %>% 
+  dplyr::summarise(incidentes_tot = mean(dep_delay, na.rm = TRUE)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 16.¿Cuál es la correlación entre la velocidad del viento y los retrasos en la salida?
+
+Tenemos:
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT
+           (COUNT(*) * SUM(dep_delay * wind_speed) - SUM(dep_delay) * SUM(wind_speed)) /(SQRT(COUNT(*) * SUM(POWER(dep_delay, 2)) - POWER(SUM(dep_delay), 2)) * SQRT(COUNT(*) * SUM(POWER(wind_speed, 2)) - POWER(SUM(wind_speed), 2)))
+           AS correlacion
+           FROM BASE")
+```
+
+```{r}
+datos_conj %>% 
+  filter(!is.na(dep_delay), !is.na(wind_speed)) %>% 
+  dplyr::summarise(incidentes_tot = cor(dep_delay,wind_speed)) %>% 
+  arrange(desc(incidentes_tot))
+```
+
+## 17.¿Los vuelos experimentan más retrasos en días con lluvias intensas?
+
+Mientras menos precipitación en pulgadas hay, mas atrasos tenemos, entonces no, sin embargo, precipitaciones altas tiene un tiepo mayor de retraso.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT precip, SUM(CASE WHEN dep_delay > 0 and arr_delay > 0 THEN 1 ELSE 0 END) delays
+           FROM BASE
+           GROUP BY 1 ORDER BY 1")
+```
+
+```{r}
+datos_conj %>%  dplyr::group_by(precip) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE), 
+                   atrasos_salida = sum(atrasos_salida),
+                   atrasos_total = sum(atrasos_total)) %>% 
+  arrange(desc(precip))
+```
+
+## 18.¿Cómo afecta la temperatura a los retrasos de los vuelos?
+
+Entre 35 y 40 de temperatura se tiene el mayor número de atrasos
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT CASE 
+           WHEN temp <= 5 THEN 'A. 0-5 temp'
+           WHEN temp <= 10 THEN 'B. 5-10 temp'
+           WHEN temp <= 15 THEN 'C. 10-15 temp'
+           WHEN temp <= 20 THEN 'D. 15-20 temp'
+           WHEN temp <= 25 THEN 'E. 20-25 temp'
+           WHEN temp <= 30 THEN 'F. 25-30 temp'
+           WHEN temp <= 35 THEN 'G. 30-35 temp'
+           WHEN temp <= 40 THEN 'H. 35-40 temp'
+           WHEN temp <= 45 THEN 'I. 40-45 temp'
+           WHEN temp <= 50 THEN 'J. 45-50 temp'
+           WHEN temp <= 55 THEN 'K. 50-55 temp'
+           WHEN temp <= 60 THEN 'L. 55-60 temp'
+           WHEN temp <= 65 THEN 'M. 60-65 temp'
+           WHEN temp <= 70 THEN 'N. 65-70 temp'
+           WHEN temp <= 75 THEN 'O. 70-75 temp'
+           WHEN temp <= 80 THEN 'P. 75-80 temp'
+           WHEN temp <= 85 THEN 'Q. 80-85 temp'
+           WHEN temp <= 90 THEN 'R. 85-90 temp'
+           WHEN temp <= 95 THEN 'S. 90-95 temp'
+           WHEN temp <= 100 THEN 'T. 95-100 temp'
+           WHEN temp <= 105 THEN 'U. 100-105 temp' END temp, 
+           SUM(CASE WHEN dep_delay > 0 and arr_delay > 0 THEN 1 ELSE 0 END) delays
+           FROM BASE
+           GROUP BY 1 ORDER BY 2")
+```
+
+```{r}
+datos_conj_1 <- datos_conj %>% mutate(temp_rank1 = case_when(temp <= 5 ~ 'A. 0-5 temp',
+                                          temp <=  10 ~ 'B. 5-10 temp',
+                                          temp <= 15 ~ 'C. 10-15 temp',
+                                          temp <= 20 ~ 'D. 15-20 temp',
+                                          temp <= 25 ~ 'E. 20-25 temp',
+                                          temp <= 30 ~ 'F. 25-30 temp',
+                                          temp <= 35 ~ 'G. 30-35 temp',
+                                          temp <= 40 ~ 'H. 35-40 temp',
+                                          temp <= 45 ~ 'I. 40-45 temp',
+                                          temp <= 50 ~ 'J. 45-50 temp',
+                                          temp <= 55 ~ 'K. 50-55 temp',
+                                          temp <= 60 ~ 'L. 55-60 temp',
+                                          temp <= 65 ~ 'M. 60-65 temp',
+                                          temp <= 70 ~ 'N. 65-70 temp',
+                                          temp <= 75 ~ 'O. 70-75 temp',
+                                          temp <= 80 ~ 'P. 75-80 temp',
+                                          temp <= 85 ~ 'Q. 80-85 temp',
+                                          temp <= 90 ~ 'R. 85-90 temp',
+                                          temp <= 95 ~ 'S. 90-95 temp',
+                                          temp <= 100 ~ 'T. 95-100 temp',
+                                          temp <= 105 ~ 'U. 100-105 temp' ),
+                      temp_rank2 = case_when(temp <= 10 ~ 'A. 0-10 temp',
+                                             temp <= 20 ~ 'B. 10-20 temp',
+                                             temp <= 30 ~ 'C. 20-30 temp',
+                                             temp <= 40 ~ 'D. 30-40 temp',
+                                             temp <= 50 ~ 'E. 40-50 temp',
+                                             temp <= 60 ~ 'F. 50-60 temp',
+                                             temp <= 70 ~ 'G. 60-70 temp',
+                                             temp <= 80 ~ 'H. 70-80 temp',
+                                             temp <= 90 ~ 'I. 80-90 temp',
+                                             temp <= 100 ~ 'J. 90-100 temp',
+                                             temp <= 110 ~ 'K. 100-110 temp' ),
+                      cuenta = case_when(dep_delay != 0 ~ 1,
+                                             TRUE ~ 0))
+
+datos_conj_1 %>% summary()
+
+datos_conj_1 %>%  dplyr::group_by(temp_rank1) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE), 
+                   sd = sd(dep_delay, na.rm = TRUE),
+                   var = var(dep_delay, na.rm = TRUE),
+                   count = sum(cuenta)) %>% 
+  arrange(temp_rank1)
+
+datos_conj_1 %>%  dplyr::group_by(temp_rank2) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE), 
+                   sd = sd(dep_delay, na.rm = TRUE),
+                   var = var(dep_delay, na.rm = TRUE),
+                   count = sum(cuenta)) %>% 
+  arrange(temp_rank2)
+```
+
+## 19.¿Cómo afectan los niveles de visibilidad a los retrasos en la llegada?
+
+Mientras más alto el número de visibilidad mayor los atrasos.
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT visib,
+           SUM(CASE WHEN arr_delay > 0 THEN 1 ELSE 0 END) delays
+           FROM BASE
+           GROUP BY 1 ORDER BY 2 DESC")
+```
+
+```{r}
+datos_conj_1 %>%  dplyr::group_by(visib) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE),
+                   count = sum(cuenta)) %>% 
+  arrange(desc(visib))
+
+```
+
+## 20.¿La alta humedad se relaciona de alguna manera con los tiempos de taxi-out más largos?
+
+Después de 65 de humedad se tiene mayor taxi-out
+
+```{r}
+dbGetQuery(conn, "WITH BASE AS (SELECT B.name aerolinea, A.year, A.month, A.day, A.dep_time, A.sched_dep_time,
+           A.dep_delay, A.arr_time, A.sched_arr_time, A.arr_delay, A.flight, A.air_time, A.distance,
+           A.hour, A.minute, A.time_hour, A.origin, C1.name aeropuerto_origen, A.dest, C2.name aeropuerto_dest,
+           D.year year_avion, D.type, D.manufacturer, D.model, D.engines, D.seats, D.speed, D.engine,
+           E.year year_clima, E.month month_clima, E.day day_clima, E.hour hour_clima, temp, dewp,
+           humid, wind_dir, wind_speed, wind_gust, precip, pressure, visib
+           FROM vuelos AS A 
+           LEFT JOIN aerolineas AS B 
+           ON A.carrier = B.carrier
+           LEFT JOIN aeropuertos AS C1 
+           ON A.origin = C1.faa
+           LEFT JOIN aeropuertos AS C2 
+           ON A.dest = C2.faa
+           LEFT JOIN aviones AS D 
+           ON A.tailnum = D.tailnum
+           LEFT JOIN clima AS E 
+           ON (A.origin = E.origin AND A.time_hour = E.time_hour))
+           
+           SELECT CASE 
+           WHEN humid <= 5 THEN 'A. 0-5 humid'
+           WHEN humid <= 10 THEN 'B. 5-10 humid'
+           WHEN humid <= 15 THEN 'C. 10-15 humid'
+           WHEN humid <= 20 THEN 'D. 15-20 humid'
+           WHEN humid <= 25 THEN 'E. 20-25 humid'
+           WHEN humid <= 30 THEN 'F. 25-30 humid'
+           WHEN humid <= 35 THEN 'G. 30-35 humid'
+           WHEN humid <= 40 THEN 'H. 35-40 humid'
+           WHEN humid <= 45 THEN 'I. 40-45 humid'
+           WHEN humid <= 50 THEN 'J. 45-50 humid'
+           WHEN humid <= 55 THEN 'K. 50-55 humid'
+           WHEN humid <= 60 THEN 'L. 55-60 humid'
+           WHEN humid <= 65 THEN 'M. 60-65 humid'
+           WHEN humid <= 70 THEN 'N. 65-70 humid'
+           WHEN humid <= 75 THEN 'O. 70-75 humid'
+           WHEN humid <= 80 THEN 'P. 75-80 humid'
+           WHEN humid <= 85 THEN 'Q. 80-85 humid'
+           WHEN humid <= 90 THEN 'R. 85-90 humid'
+           WHEN humid <= 95 THEN 'S. 90-95 humid'
+           WHEN humid <= 100 THEN 'T. 95-100 humid' END humid,
+           avg(dep_delay)
+           FROM BASE
+           GROUP BY 1
+           ORDER BY 2 DESC")
+```
+
+```{r}
+datos_conj_2 <- datos_conj_1 %>% mutate(humid_rank1 = case_when(humid <= 5 ~ 'A. 0-5 humid',
+                                                              humid <=  10 ~ 'B. 5-10 humid',
+                                                              humid <= 15 ~ 'C. 10-15 humid',
+                                                              humid <= 20 ~ 'D. 15-20 humid',
+                                                              humid <= 25 ~ 'E. 20-25 humid',
+                                                              humid <= 30 ~ 'F. 25-30 humid',
+                                                              humid <= 35 ~ 'G. 30-35 humid',
+                                                              humid <= 40 ~ 'H. 35-40 humid',
+                                                              humid <= 45 ~ 'I. 40-45 humid',
+                                                              humid <= 50 ~ 'J. 45-50 humid',
+                                                              humid <= 55 ~ 'K. 50-55 humid',
+                                                              humid <= 60 ~ 'L. 55-60 humid',
+                                                              humid <= 65 ~ 'M. 60-65 humid',
+                                                              humid <= 70 ~ 'N. 65-70 humid',
+                                                              humid <= 75 ~ 'O. 70-75 humid',
+                                                              humid <= 80 ~ 'P. 75-80 humid',
+                                                              humid <= 85 ~ 'Q. 80-85 humid',
+                                                              humid <= 90 ~ 'R. 85-90 humid',
+                                                              humid <= 95 ~ 'S. 90-95 humid',
+                                                              humid <= 100 ~ 'T. 95-100 humid',
+                                                              humid <= 105 ~ 'U. 100-105 humid' ),
+                                      humid_rank2 = case_when(humid <= 10 ~ 'A. 0-10 humid',
+                                                              humid <= 20 ~ 'B. 10-20 humid',
+                                                              humid <= 30 ~ 'C. 20-30 humid',
+                                                              humid <= 40 ~ 'D. 30-40 humid',
+                                                              humid <= 50 ~ 'E. 40-50 humid',
+                                                              humid <= 60 ~ 'F. 50-60 humid',
+                                                              humid <= 70 ~ 'G. 60-70 humid',
+                                                              humid <= 80 ~ 'H. 70-80 humid',
+                                                              humid <= 90 ~ 'I. 80-90 humid',
+                                                              humid <= 100 ~ 'J. 90-100 humid',
+                                                              humid <= 110 ~ 'K. 100-110 humid' ),
+                                      cuenta = case_when(dep_delay != 0 ~ 1,
+                                                         TRUE ~ 0))
+
+
+datos_conj_2 %>%  dplyr::group_by(humid_rank1) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE)) %>% 
+  arrange(desc(humid_rank1))
+
+datos_conj_2 %>%  dplyr::group_by(humid_rank2) %>% 
+  dplyr::summarise(avg = mean(dep_delay, na.rm = TRUE)) %>% 
+  arrange(desc(humid_rank2))
+```
