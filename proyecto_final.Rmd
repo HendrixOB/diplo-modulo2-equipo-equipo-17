@@ -16,3 +16,30 @@ library(dbplyr)
 library(RSQLite)
 
 conn <- DBI::dbConnect(RSQLite::SQLite(), "vuelos.db")
+```
+
+### Intrucciones colaborador 1 
+
+Desde su máquina crear chunks de código R en el archivo "proyecto_final.Rmd" (que obtuvo del Administrador) que muestre el número de tablas y sus nombres de la base de datos "vuelos"; además, crear un objeto en R, un por cada tabla de la base de datos. Hacer commit y push del código al repositorio del administrador y hacer un pull request.
+
+
+
+```{r}
+tablas <- dbListTables(conn) 
+
+numero_tablas <- length(tablas)
+
+cat(numero_tablas)
+cat("\n")
+cat(tablas)
+```
+
+Tenemos 5 tablas. 
+
+```{r}
+aerol <- dbGetQuery(conn, "SELECT * FROM aerolineas")
+aerop <- dbGetQuery(conn, "SELECT * FROM aeropuertos")
+avio <- dbGetQuery(conn, "SELECT * FROM aviones")
+clim <- dbGetQuery(conn, "SELECT * FROM clima")
+vuelo <- dbGetQuery(conn, "SELECT * FROM vuelos")
+```
