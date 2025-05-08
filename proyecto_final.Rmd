@@ -1,19 +1,21 @@
 ---
 title: "Proyecto final módulo 2"
-author: "Equipo - n"
+author: "Equipo - 17"
 output: html_document
 ---
 
 # Integrantes:
 
-+ Hendrix Roberto Olvera Barbecho. Rol: Administrador
-+ Integrante 2. Rol: Colaborador 1
-+ Integrante 3. Rol: Colaborador 2
++ Hendrix Roberto Olvera Barbecho Rol: Administrador
++ Erick Muñiz Morales. Rol: Colaborador 1
++ Francisco Eduardo Díaz Barrios. Rol: Colaborador 2
 
 ```{r}
 library(DBI)
 library(dbplyr)
 library(RSQLite)
+library(visdat)
+
 
 conn <- DBI::dbConnect(RSQLite::SQLite(), "vuelos.db")
 ```
@@ -42,4 +44,42 @@ aerop <- dbGetQuery(conn, "SELECT * FROM aeropuertos")
 avio <- dbGetQuery(conn, "SELECT * FROM aviones")
 clim <- dbGetQuery(conn, "SELECT * FROM clima")
 vuelo <- dbGetQuery(conn, "SELECT * FROM vuelos")
+```
+
+### Instrucciones Colaborador 2: 
+
+Desde su máquina crear chunks de código R en el archivo "proyecto_final.Rmd" (que obtuvo del Administrador) que use las funciones vis_dat() y vis_miss() de la librería {visdat} para analizar los tipos de datos y datos faltantes de cada una de las tablas generadas por el Colaborador 1. Debe corregir la línea author: "Equipo - n" con el número correcto de equipo y agregar los nombres completos de los integrantes en la sección de # Integrantes. Hacer commit y push del código al repositorio del administrador y hacer un pull request.
+ 
+```{r}
+aerol %>% vis_dat()
+aerop %>% vis_dat()
+avio %>% vis_dat()
+clim %>% vis_dat()
+```
+
+La tabla "vuelo" es muy larga por lo que no se puede visualizar completa usando vis_dat() o vis_miss() por lo que vamos a tomar subconjuntos de la tabla
+Los subconjuntos tienen 10 mil elementos y serán tomados los primeros  y los últimos (head y tail respectivamente), los que tengan mayor distancia de vuelo y 
+un subconjunto aletorio.
+
+```{r}
+vuelo %>%  dplyr::slice_head( n = 10000 ) %>% vis_dat()
+vuelo %>%  dplyr::slice_tail(n = 10000) %>% vis_dat()
+vuelo %>%  dplyr::slice_max(distance, n = 10000) %>% vis_dat( )
+vuelo %>%  dplyr::slice_min(distance, n = 10000) %>% vis_dat()
+vuelo %>%  dplyr::slice_sample(n = 10000) %>% vis_dat()
+```
+
+```{r}
+aerol %>% vis_miss()
+aerop %>% vis_miss()
+avio %>% vis_miss()
+clim %>% vis_miss()
+```
+
+```{r}
+vuelo %>%  dplyr::slice_head( n = 10000 ) %>% vis_miss()
+vuelo %>%  dplyr::slice_tail(n = 10000) %>% vis_miss()
+vuelo %>%  dplyr::slice_max(distance, n= 10000) %>% vis_miss()
+vuelo %>%  dplyr::slice_min(distance, n= 10000) %>% vis_miss()
+vuelo %>%  dplyr::slice_sample(n=10000) %>% vis_miss()
 ```
