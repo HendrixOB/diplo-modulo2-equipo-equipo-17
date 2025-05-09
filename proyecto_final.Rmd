@@ -141,3 +141,15 @@ vuelo %>%
   skim() %>%
   yank("character")
 ```
+
+
+
+# Subsección 2
+
+Se usará el conjunto de datos de encuesta de café
+
+```{r}
+datos <- readr::read_csv("coffee_ratings.csv")
+```
+#### Actividad 0: Realice un análisis de valores faltantes del objeto datos
+
